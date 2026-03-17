@@ -1,0 +1,125 @@
+// schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  name         String
+  email        String?
+  role         String   @default("inspektur") // "admin" | "inspektur"
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  inspections    Inspection[] @relation("Inspector")
+  scheduledBy    Inspection[] @relation("ScheduledBy")
+  refreshTokens  RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Warehouse {
+  id             String   @id @default(cuid())
+  name           String
+  address        String
+  latitude       Float
+  longitude      Float
+  geoFenceRadius Float    @default(100)
+  capacity       Float?
+  capacityUnit   String?
+  status         String   @default("aktif") // "aktif" | "tidak_aktif" | "perbaikan"
+  pic            String?
+  picPhone       String?
+  wasteTypes     String   @default("[]") // JSON array string
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  inspections Inspection[]
+}
+
+model Inspection {
+  id              String    @id @default(cuid())
+  warehouseId     String
+  warehouse       Warehouse @relation(fields: [warehouseId], references: [id])
+  inspectorId     String
+  inspector       User      @relation("Inspector", fields: [inspectorId], references: [id])
+  scheduledById   String?
+  scheduledBy     User?     @relation("ScheduledBy", fields: [scheduledById], references: [id])
+  scheduledDate   DateTime
+  startedAt       DateTime?
+  completedAt     DateTime?
+  gpsLat          Float?
+  gpsLng          Float?
+  gpsAccuracy     Float?
+  status          String    @default("dijadwalkan") // "dijadwalkan" | "berlangsung" | "selesai" | "dibatalkan"
+  complianceScore Float?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  checklistResults ChecklistResult[]
+  findings         Finding[]
+  photos           Photo[]
+}
+
+model ChecklistTemplate {
+  id          String   @id @default(cuid())
+  category    String
+  description String
+  order       Int
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  results ChecklistResult[]
+}
+
+model ChecklistResult {
+  id           String            @id @default(cuid())
+  inspectionId String
+  inspection   Inspection        @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  templateId   String
+  template     ChecklistTemplate @relation(fields: [templateId], references: [id])
+  status       String            @default("na") // "sesuai" | "tidak_sesuai" | "na"
+  comment      String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([inspectionId, templateId])
+}
+
+model Finding {
+  id             String     @id @default(cuid())
+  inspectionId   String
+  inspection     Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  severity       String     // "ringan" | "sedang" | "kritis"
+  description    String
+  recommendation String?
+  followUpStatus String     @default("pending") // "pending" | "resolved"
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+model Photo {
+  id           String     @id @default(cuid())
+  inspectionId String
+  inspection   Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  filename     String
+  url          String
+  caption      String?
+  createdAt    DateTime   @default(now())
+}
