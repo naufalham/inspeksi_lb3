@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart';
 import '../../core/constants/api_endpoints.dart';
 import '../../core/constants/app_colors.dart';
 import '../../core/network/api_client.dart';
@@ -25,9 +28,22 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
   List<Map<String, dynamic>> _checklist = [];
   List<Map<String, dynamic>> _findings = [];
   List<File> _photos = [];
+  List<Map<String, dynamic>> _namedPhotos = []; // [{label: str, file: File?}]
+  String _overallStatus = '';
+  String _catatan = '';
 
   bool _loading = true;
   bool _submitting = false;
+
+  static const _namedPhotoSlots = {
+    'p3k': ['Foto tampak depan kotak P3K', 'Foto seluruh isi kotak', 'Foto item yang mendekati kadaluarsa', 'Foto penempatan di lokasi kerja'],
+    'apar': ['Tampak Depan APAR', 'Pressure gauge', 'Label kadaluarsa', 'Area Pemasangan'],
+  };
+  static const _overallStatusOpts = {
+    'p3k': ['Lengkap & Layak', 'Kurang (Perlu Penambahan)', 'Tidak Layak (Perlu Penggantian)'],
+    'apar': ['Layak Pakai', 'Perlu Perbaikan', 'Perlu Penggantian'],
+  };
+  static const _comingSoonTypes = ['apd', 'fire_alarm', 'hydrant'];
 
   // GPS
   double? _userLat, _userLng;
@@ -37,16 +53,6 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
 
   static const _stepLabels = ['GPS', 'Checklist', 'Foto', 'Temuan', 'Submit'];
 
-  static const _catIcons = {
-    'Bangunan Gudang': '🏗️',
-    'Labeling & Simbol': '🏷️',
-    'MSDS': '📄',
-    'Kemasan & Kontainer': '🛢️',
-    'Drainase & Penampungan': '🚰',
-    'APD Petugas': '🦺',
-    'Peralatan Darurat': '🧯',
-  };
-
   @override
   void initState() {
     super.initState();
@@ -55,16 +61,19 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
 
   Future<void> _loadData() async {
     try {
-      final results = await Future.wait([
-        ApiClient()
-            .get(ApiEndpoints.inspectionById(widget.inspectionId)),
-        ApiClient().get(ApiEndpoints.checklistTemplates),
-      ]);
-      final inspection =
-          results[0]['data'] as Map<String, dynamic>;
+      final inspRes = await ApiClient()
+          .get(ApiEndpoints.inspectionById(widget.inspectionId));
+      final inspection = inspRes['data'] as Map<String, dynamic>;
+      final inspType = (inspection['type'] as String?) ?? 'tps_lb3';
+      final tmplRes = await ApiClient()
+          .get(ApiEndpoints.checklistTemplatesByType(inspType));
       final templates =
-          (results[1]['data']['templates'] as List?) ?? [];
+          (tmplRes['data']['templates'] as List?) ?? [];
       if (mounted) {
+        final isInProgress = inspection['status'] == 'berlangsung';
+        final inspType = (inspection['type'] as String?) ?? 'tps_lb3';
+        final slots = _namedPhotoSlots[inspType] ?? [];
+        final statusOpts = _overallStatusOpts[inspType] ?? [];
         setState(() {
           _inspection = inspection;
           _checklist = templates
@@ -72,13 +81,21 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
                     'templateId': t['id'],
                     'category': t['category'],
                     'description': t['description'],
+                    'answerOptions': t['answerOptions'] ?? '[]',
+                    'requiresPhoto': t['requiresPhoto'] ?? false,
+                    'photoLabel': t['photoLabel'] ?? '',
                     'status': '',
                     'comment': '',
                   })
               .toList();
+          _namedPhotos = slots
+              .map<Map<String, dynamic>>((label) => {'label': label, 'file': null})
+              .toList();
+          _overallStatus = statusOpts.isNotEmpty ? statusOpts[0] : '';
           _loading = false;
+          if (isInProgress) _step = 1;
         });
-        _checkGPS();
+        if (!isInProgress) _checkGPS();
       }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
@@ -162,7 +179,19 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
             ApiEndpoints.inspectionFindings(widget.inspectionId), f);
       }
 
-      // Upload photos
+      // Upload named photos with labels
+      for (final np in _namedPhotos) {
+        final file = np['file'] as File?;
+        if (file != null) {
+          await ApiClient().postMultipart(
+            ApiEndpoints.inspectionPhotos(widget.inspectionId),
+            file,
+            fields: {'label': np['label'] as String},
+          );
+        }
+      }
+
+      // Upload extra photos
       for (final photo in _photos) {
         await ApiClient().postMultipart(
           ApiEndpoints.inspectionPhotos(widget.inspectionId),
@@ -171,8 +200,11 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
       }
 
       // Complete
+      final completeBody = <String, dynamic>{};
+      if (_catatan.isNotEmpty) completeBody['notes'] = _catatan;
+      if (_overallStatus.isNotEmpty) completeBody['overallStatus'] = _overallStatus;
       await ApiClient().post(
-          ApiEndpoints.completeInspection(widget.inspectionId), {});
+          ApiEndpoints.completeInspection(widget.inspectionId), completeBody);
 
       if (mounted) {
         _snack('✅ Inspeksi berhasil diselesaikan!');
@@ -182,6 +214,15 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
       _snack(e.toString(), isError: true);
     }
     if (mounted) setState(() => _submitting = false);
+  }
+
+  List<Map<String, dynamic>> _parseOpts(String json) {
+    try {
+      final list = (jsonDecode(json) as List);
+      return list.cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
   }
 
   void _snack(String msg, {bool isError = false}) {
@@ -195,29 +236,33 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
   Future<void> _pickPhoto() async {
     final src = await showDialog<ImageSource>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         backgroundColor: AppColors.surface,
         title: Text('Pilih Foto',
             style: TextStyle(color: AppColors.textPrimary)),
         actions: [
           TextButton(
             onPressed: () =>
-                Navigator.pop(context, ImageSource.camera),
+                Navigator.pop(dialogCtx, ImageSource.camera),
             child: const Text('Kamera'),
           ),
           TextButton(
             onPressed: () =>
-                Navigator.pop(context, ImageSource.gallery),
+                Navigator.pop(dialogCtx, ImageSource.gallery),
             child: const Text('Galeri'),
           ),
         ],
       ),
     );
     if (src == null || !mounted) return;
-    final picked = await ImagePicker()
-        .pickImage(source: src, imageQuality: 75);
-    if (picked != null && mounted) {
-      setState(() => _photos.add(File(picked.path)));
+    try {
+      final picked = await ImagePicker()
+          .pickImage(source: src, imageQuality: 75);
+      if (picked != null && mounted) {
+        setState(() => _photos.add(File(picked.path)));
+      }
+    } catch (e) {
+      _snack('Gagal membuka ${src == ImageSource.camera ? 'kamera' : 'galeri'}', isError: true);
     }
   }
 
@@ -416,9 +461,10 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
             const SizedBox(height: 8),
             Text(
               '${_userLat!.toStringAsFixed(5)}, ${_userLng!.toStringAsFixed(5)}',
-              style: TextStyle(
-                  color: AppColors.textMuted, fontSize: 11),
+              style: TextStyle(color: AppColors.textMuted, fontSize: 11),
             ),
+            const SizedBox(height: 20),
+            _buildGpsMap(),
           ],
           const SizedBox(height: 32),
           if (_gpsStatus == 'checking')
@@ -446,52 +492,138 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
     );
   }
 
+  Widget _buildGpsMap() {
+    final wh = _inspection!['warehouse'];
+    final whLat = (wh['latitude'] as num).toDouble();
+    final whLng = (wh['longitude'] as num).toDouble();
+    final radius = (wh['geoFenceRadius'] as num).toDouble();
+    final center = LatLng(
+      (_userLat! + whLat) / 2,
+      (_userLng! + whLng) / 2,
+    );
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: 220,
+        child: FlutterMap(
+          options: MapOptions(
+            initialCenter: center,
+            initialZoom: 15,
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+            ),
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+              userAgentPackageName: 'com.example.inspeksipro',
+            ),
+            // Geofence circle (dashed via custom painter not available, use CircleLayer)
+            CircleLayer(circles: [
+              CircleMarker(
+                point: LatLng(whLat, whLng),
+                radius: radius,
+                useRadiusInMeter: true,
+                color: const Color(0x146366f1),
+                borderColor: const Color(0xFF6366f1),
+                borderStrokeWidth: 2,
+              ),
+            ]),
+            // Markers
+            CircleLayer(circles: [
+              // Gudang — indigo
+              CircleMarker(
+                point: LatLng(whLat, whLng),
+                radius: 9,
+                color: const Color(0xFF6366f1),
+                borderColor: Colors.white,
+                borderStrokeWidth: 2,
+              ),
+              // User — green/warning
+              CircleMarker(
+                point: LatLng(_userLat!, _userLng!),
+                radius: 9,
+                color: _withinFence
+                    ? const Color(0xFF10b981)
+                    : const Color(0xFFf59e0b),
+                borderColor: Colors.white,
+                borderStrokeWidth: 2,
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ─── STEP 1: CHECKLIST ────────────────────────────────────────────────────
 
   Widget _buildChecklistStep() {
+    final inspType = (_inspection?['type'] as String?) ?? '';
+    final isComingSoon = _comingSoonTypes.contains(inspType);
     final categories =
         _checklist.map((c) => c['category'] as String).toSet().toList();
 
     return Column(
       children: [
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: categories.length,
-            itemBuilder: (_, ci) {
-              final cat = categories[ci];
-              final items = _checklist
-                  .where((c) => c['category'] == cat)
-                  .toList();
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      '${_catIcons[cat] ?? '📋'} $cat',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
+          child: isComingSoon
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🚧', style: TextStyle(fontSize: 64)),
+                      const SizedBox(height: 16),
+                      Text('Segera Hadir',
+                          style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 8),
+                      Text('Form inspeksi ini sedang dalam pengembangan.',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+                          textAlign: TextAlign.center),
+                    ],
                   ),
-                  ...items.map((item) {
-                    final idx = _checklist.indexOf(item);
-                    return _ChecklistItem(
-                      item: item,
-                      onStatusChanged: (s) => setState(
-                          () => _checklist[idx]['status'] = s),
-                      onCommentChanged: (v) =>
-                          _checklist[idx]['comment'] = v,
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: categories.length,
+                  itemBuilder: (_, ci) {
+                    final cat = categories[ci];
+                    final items = _checklist
+                        .where((c) => c['category'] == cat)
+                        .toList();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          child: Text(
+                            cat,
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        ...items.map((item) {
+                          final idx = _checklist.indexOf(item);
+                          return _ChecklistItem(
+                            item: item,
+                            onStatusChanged: (s) => setState(
+                                () => _checklist[idx]['status'] = s),
+                            onCommentChanged: (v) =>
+                                _checklist[idx]['comment'] = v,
+                          );
+                        }),
+                        const SizedBox(height: 8),
+                      ],
                     );
-                  }),
-                  const SizedBox(height: 8),
-                ],
-              );
-            },
-          ),
+                  },
+                ),
         ),
         _buildNavRow(
           onPrev: () => setState(() => _step = 0),
@@ -503,7 +635,34 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
 
   // ─── STEP 2: PHOTOS ───────────────────────────────────────────────────────
 
+  Future<void> _pickNamedPhoto(int idx) async {
+    final src = await showDialog<ImageSource>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Pilih Foto', style: TextStyle(color: AppColors.textPrimary)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, ImageSource.camera), child: const Text('Kamera')),
+          TextButton(onPressed: () => Navigator.pop(dialogCtx, ImageSource.gallery), child: const Text('Galeri')),
+        ],
+      ),
+    );
+    if (src == null || !mounted) return;
+    try {
+      final picked = await ImagePicker().pickImage(source: src, imageQuality: 75);
+      if (picked != null && mounted) {
+        setState(() => _namedPhotos[idx] = {
+          'label': _namedPhotos[idx]['label'],
+          'file': File(picked.path),
+        });
+      }
+    } catch (_) {}
+  }
+
   Widget _buildPhotosStep() {
+    final hasNamed = _namedPhotos.isNotEmpty;
+    final statusOpts = _overallStatusOpts[(_inspection?['type'] as String?) ?? ''] ?? [];
+
     return Column(
       children: [
         Expanded(
@@ -512,25 +671,112 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('📸 Dokumentasi Foto',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                    )),
-                const SizedBox(height: 4),
-                Text('Ambil foto sebagai bukti visual.',
-                    style: TextStyle(
-                        color: AppColors.textSecondary, fontSize: 13)),
+                // Named photo slots
+                if (hasNamed) ...[
+                  Text('📸 Foto Wajib',
+                      style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 15)),
+                  const SizedBox(height: 12),
+                  ..._namedPhotos.asMap().entries.map((e) {
+                    final idx = e.key;
+                    final np = e.value;
+                    final file = np['file'] as File?;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: file != null ? AppColors.success : AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: file != null
+                                ? Image.file(file, width: 60, height: 60, fit: BoxFit.cover)
+                                : Container(
+                                    width: 60, height: 60,
+                                    decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(8)),
+                                    child: Icon(Icons.camera_alt_outlined, color: AppColors.textMuted, size: 28),
+                                  ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(np['label'] as String,
+                                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                                    maxLines: 2),
+                                if (file != null)
+                                  Text('✓ Terambil', style: TextStyle(color: AppColors.success, fontSize: 11)),
+                              ],
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _pickNamedPhoto(idx),
+                            child: Text(file != null ? 'Ganti' : 'Ambil',
+                                style: TextStyle(color: AppColors.primary, fontSize: 12)),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 16),
+                ],
+
+                // Overall status
+                if (statusOpts.isNotEmpty) ...[
+                  Text('Status Keseluruhan',
+                      style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: statusOpts.map((opt) => GestureDetector(
+                      onTap: () => setState(() => _overallStatus = opt),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _overallStatus == opt ? AppColors.primary.withOpacity(0.15) : AppColors.surface,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _overallStatus == opt ? AppColors.primary : AppColors.border),
+                        ),
+                        child: Text(opt, style: TextStyle(
+                          color: _overallStatus == opt ? AppColors.primary : AppColors.textSecondary,
+                          fontSize: 12, fontWeight: FontWeight.w500,
+                        )),
+                      ),
+                    )).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // Catatan
+                Text('Catatan', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 14)),
+                const SizedBox(height: 8),
+                TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Catatan tambahan (opsional)...',
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  ),
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  maxLines: 3,
+                  onChanged: (v) => _catatan = v,
+                ),
                 const SizedBox(height: 16),
+
+                // Extra photos
+                Text('📷 Foto Tambahan',
+                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 14)),
+                const SizedBox(height: 8),
                 GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate:
-                      const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3, crossAxisSpacing: 8, mainAxisSpacing: 8,
                   ),
                   itemCount: _photos.length + 1,
                   itemBuilder: (_, i) {
@@ -539,22 +785,15 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
                         onTap: _pickPhoto,
                         child: Container(
                           decoration: BoxDecoration(
-                            border: Border.all(
-                                color: AppColors.border,
-                                width: 2),
+                            border: Border.all(color: AppColors.border, width: 2),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.add_a_photo_outlined,
-                                  color: AppColors.textSecondary,
-                                  size: 26),
+                              Icon(Icons.add_a_photo_outlined, color: AppColors.textSecondary, size: 26),
                               const SizedBox(height: 4),
-                              Text('Foto',
-                                  style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 11)),
+                              Text('Tambah', style: TextStyle(color: AppColors.textSecondary, fontSize: 10)),
                             ],
                           ),
                         ),
@@ -564,28 +803,16 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
                       children: [
                         ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: Image.file(
-                            _photos[i],
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                          ),
+                          child: Image.file(_photos[i], fit: BoxFit.cover, width: double.infinity, height: double.infinity),
                         ),
                         Positioned(
-                          top: 4,
-                          right: 4,
+                          top: 4, right: 4,
                           child: GestureDetector(
-                            onTap: () => setState(
-                                () => _photos.removeAt(i)),
+                            onTap: () => setState(() => _photos.removeAt(i)),
                             child: Container(
-                              width: 22,
-                              height: 22,
-                              decoration: BoxDecoration(
-                                color: AppColors.danger,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.close,
-                                  size: 14, color: Colors.white),
+                              width: 22, height: 22,
+                              decoration: BoxDecoration(color: AppColors.danger, shape: BoxShape.circle),
+                              child: const Icon(Icons.close, size: 14, color: Colors.white),
                             ),
                           ),
                         ),
@@ -665,16 +892,19 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
   // ─── STEP 4: SUBMIT ───────────────────────────────────────────────────────
 
   Widget _buildSubmitStep() {
-    final sesuai =
-        _checklist.where((c) => c['status'] == 'sesuai').length;
-    final na =
-        _checklist.where((c) => c['status'] == 'na').length;
-    final filled = _checklist
-        .where((c) => (c['status'] as String).isNotEmpty)
-        .length;
-    final applicable = filled - na;
-    final score =
-        applicable > 0 ? (sesuai / applicable * 100).round() : 0;
+    // Score based on answerOptions weights
+    double totalMax = 0;
+    double totalScore = 0;
+    for (final c in _checklist) {
+      final opts = _parseOpts(c['answerOptions'] as String? ?? '[]');
+      if (opts.isEmpty) continue;
+      final maxScore = opts.map((o) => (o['score'] as num).toDouble()).reduce((a, b) => a > b ? a : b);
+      totalMax += maxScore;
+      final sel = opts.firstWhere((o) => o['label'] == c['status'], orElse: () => {'score': 0});
+      totalScore += (sel['score'] as num).toDouble();
+    }
+    final score = totalMax > 0 ? (totalScore / totalMax * 100).round() : 0;
+    final filled = _checklist.where((c) => (c['status'] as String).isNotEmpty).length;
     final scoreColor = score >= 80
         ? AppColors.success
         : score >= 60
@@ -733,12 +963,12 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
                   children: [
                     _SummaryTile('Checklist',
                         '$filled/${_checklist.length}', AppColors.info),
-                    _SummaryTile('Sesuai', '$sesuai item',
+                    _SummaryTile('Skor', '$score%',
                         AppColors.success),
                     _SummaryTile('Temuan',
                         '${_findings.length} item', AppColors.warning),
-                    _SummaryTile(
-                        'Foto', '${_photos.length} foto', AppColors.primary),
+                    _SummaryTile('Foto Wajib',
+                        '${_namedPhotos.where((p) => p['file'] != null).length}/${_namedPhotos.length}', AppColors.primary),
                   ],
                 ),
               ],
@@ -833,7 +1063,7 @@ class _InspectionFormScreenState extends State<InspectionFormScreen> {
 
 // ─── CHECKLIST ITEM WIDGET ────────────────────────────────────────────────────
 
-class _ChecklistItem extends StatelessWidget {
+class _ChecklistItem extends StatefulWidget {
   final Map<String, dynamic> item;
   final ValueChanged<String> onStatusChanged;
   final ValueChanged<String> onCommentChanged;
@@ -845,7 +1075,25 @@ class _ChecklistItem extends StatelessWidget {
   });
 
   @override
+  State<_ChecklistItem> createState() => _ChecklistItemState();
+}
+
+class _ChecklistItemState extends State<_ChecklistItem> {
+  bool _showComment = false;
+
+  List<Map<String, dynamic>> get _opts {
+    try {
+      final raw = widget.item['answerOptions'];
+      if (raw == null || raw == '[]') return [];
+      return (jsonDecode(raw as String) as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final opts = _opts;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -853,73 +1101,85 @@ class _ChecklistItem extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(item['description'],
+            Text(widget.item['description'],
                 style: TextStyle(
                     color: AppColors.textSecondary, fontSize: 13)),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                for (final opt in [
-                  ['sesuai', 'Sesuai', AppColors.success],
-                  ['tidak_sesuai', 'Tidak', AppColors.danger],
-                  ['na', 'N/A', AppColors.textSecondary],
-                ])
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 5),
-                      child: GestureDetector(
-                        onTap: () =>
-                            onStatusChanged(opt[0] as String),
-                        child: AnimatedContainer(
-                          duration:
-                              const Duration(milliseconds: 150),
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 6),
-                          decoration: BoxDecoration(
-                            color: item['status'] == opt[0]
-                                ? (opt[2] as Color).withOpacity(0.2)
-                                : AppColors.background,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: item['status'] == opt[0]
-                                  ? (opt[2] as Color)
-                                  : AppColors.border,
-                            ),
-                          ),
-                          child: Center(
-                            child: Text(
-                              opt[1] as String,
-                              style: TextStyle(
-                                color: item['status'] == opt[0]
-                                    ? (opt[2] as Color)
-                                    : AppColors.textSecondary,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: opts.map((opt) {
+                final label = opt['label'] as String;
+                final score = (opt['score'] as num).toDouble();
+                final isSelected = widget.item['status'] == label;
+                final activeColor = score > 0 ? AppColors.success : AppColors.danger;
+                return GestureDetector(
+                  onTap: () => widget.onStatusChanged(label),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? activeColor.withValues(alpha: 0.2)
+                          : AppColors.background,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isSelected ? activeColor : AppColors.border,
+                      ),
+                    ),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: isSelected ? activeColor : AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-              ],
+                );
+              }).toList(),
             ),
-            const SizedBox(height: 6),
-            TextField(
-              decoration: InputDecoration(
-                hintText: 'Komentar (opsional)',
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: AppColors.border),
+            if (_showComment) ...[
+              const SizedBox(height: 8),
+              TextField(
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Komentar...',
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 8),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: () => setState(() => _showComment = false),
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
+                style: TextStyle(
+                    color: AppColors.textSecondary, fontSize: 12),
+                onChanged: widget.onCommentChanged,
+              ),
+            ] else ...[
+              const SizedBox(height: 4),
+              GestureDetector(
+                onTap: () => setState(() => _showComment = true),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    widget.item['comment'] != null && (widget.item['comment'] as String).isNotEmpty
+                        ? '💬 ${widget.item['comment']}'
+                        : '+ Tambah komentar',
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 11,
+                    ),
+                  ),
                 ),
               ),
-              style: TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12),
-              onChanged: onCommentChanged,
-            ),
+            ],
           ],
         ),
       ),

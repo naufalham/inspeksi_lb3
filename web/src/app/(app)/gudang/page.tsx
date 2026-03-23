@@ -1,8 +1,18 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import api from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
+
+const WarehouseMapFull = dynamic(
+  () => import('@/components/WarehouseMap').then(m => m.WarehouseMapFull),
+  { ssr: false }
+);
+const WarehouseMiniMap = dynamic(
+  () => import('@/components/WarehouseMap').then(m => m.WarehouseMiniMap),
+  { ssr: false }
+);
 
 interface Warehouse {
   id: string;
@@ -104,6 +114,21 @@ export default function GudangPage() {
         )}
       </div>
 
+      {/* Peta semua gudang */}
+      {!loading && warehouses.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-700">
+            <h3 className="font-semibold text-white text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+              </svg>
+              Peta Lokasi Gudang
+            </h3>
+          </div>
+          <WarehouseMapFull warehouses={warehouses} />
+        </div>
+      )}
+
       {/* Grid */}
       {loading ? (
         <div className="flex justify-center py-20">
@@ -112,8 +137,11 @@ export default function GudangPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {warehouses.map(wh => (
-            <div key={wh.id} className="card p-5 hover:border-slate-600 transition-colors">
-              <div className="flex items-start justify-between mb-3">
+            <div key={wh.id} className="card overflow-hidden hover:border-slate-600 transition-colors">
+              {/* Mini map */}
+              <WarehouseMiniMap warehouse={wh} />
+              <div className="p-5">
+                <div className="flex items-start justify-between mb-3">
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-white truncate">{wh.name}</h3>
                   <p className="text-slate-400 text-sm mt-0.5 truncate">{wh.address}</p>
@@ -176,6 +204,7 @@ export default function GudangPage() {
                   </>
                 )}
               </div>
+              </div>{/* end p-5 */}
             </div>
           ))}
 
@@ -270,7 +299,7 @@ function WarehouseModal({
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[2000] p-4">
       <div className="card w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold text-white">{item ? 'Edit' : 'Tambah'} Gudang</h3>

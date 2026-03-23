@@ -14,16 +14,20 @@ const INCLUDE_FULL = {
 };
 
 exports.getAll = async (req, res) => {
-  const { status, warehouseId, inspectorId, from, to, page = 1, limit = 20 } = req.query;
+  const { status, type, warehouseId, inspectorId, from, to, page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const where = {};
   if (status) where.status = status;
+  if (type) where.type = type;
   if (warehouseId) where.warehouseId = warehouseId;
 
-  // Non-admin can only see their own inspections
+  // Non-admin can see their own + unassigned inspections (task pool)
   if (req.user.role !== 'admin') {
-    where.inspectorId = req.user.userId;
+    where.OR = [
+      { inspectorId: req.user.userId },
+      { inspectorId: null },
+    ];
   } else if (inspectorId) {
     where.inspectorId = inspectorId;
   }
@@ -59,8 +63,8 @@ exports.getById = async (req, res) => {
   });
   if (!insp) return res.status(404).json({ success: false, message: 'Inspeksi tidak ditemukan' });
 
-  // Non-admin can only see their own
-  if (req.user.role !== 'admin' && insp.inspectorId !== req.user.userId) {
+  // Non-admin can only see their own or unassigned
+  if (req.user.role !== 'admin' && insp.inspectorId && insp.inspectorId !== req.user.userId) {
     return res.status(403).json({ success: false, message: 'Akses ditolak' });
   }
 
@@ -68,17 +72,18 @@ exports.getById = async (req, res) => {
 };
 
 exports.create = async (req, res) => {
-  const { warehouseId, inspectorId, scheduledDate, notes } = req.body;
-  if (!warehouseId || !inspectorId || !scheduledDate) {
-    return res.status(400).json({ success: false, message: 'warehouseId, inspectorId, scheduledDate diperlukan' });
+  const { warehouseId, inspectorId, scheduledDate, notes, type } = req.body;
+  if (!warehouseId || !scheduledDate) {
+    return res.status(400).json({ success: false, message: 'warehouseId, scheduledDate diperlukan' });
   }
 
   const insp = await prisma.inspection.create({
     data: {
       warehouseId,
-      inspectorId,
+      inspectorId: inspectorId || null,
       scheduledById: req.user.userId,
       scheduledDate: new Date(scheduledDate),
+      type: type || 'tps_lb3',
       notes: notes || null,
     },
     include: {
@@ -108,11 +113,19 @@ exports.start = async (req, res) => {
   const { gpsLat, gpsLng, gpsAccuracy } = req.body;
   const insp = await prisma.inspection.findUnique({
     where: { id: req.params.id },
-    include: { warehouse: true },
+    include: { warehouse: true, inspector: { select: { id: true, name: true } } },
   });
   if (!insp) return res.status(404).json({ success: false, message: 'Inspeksi tidak ditemukan' });
   if (insp.status !== 'dijadwalkan') {
     return res.status(400).json({ success: false, message: `Inspeksi sudah dalam status: ${insp.status}` });
+  }
+
+  // Task pool: check if already claimed by someone else
+  if (insp.inspectorId && insp.inspectorId !== req.user.userId && req.user.role !== 'admin') {
+    return res.status(409).json({
+      success: false,
+      message: `Inspeksi sudah diambil oleh ${insp.inspector?.name ?? 'inspektur lain'}`,
+    });
   }
 
   let geofenceResult = null;
@@ -138,6 +151,8 @@ exports.start = async (req, res) => {
     data: {
       status: 'berlangsung',
       startedAt: new Date(),
+      // Auto-claim: assign inspector if unassigned (task pool)
+      ...(insp.inspectorId ? {} : { inspectorId: req.user.userId }),
       gpsLat: gpsLat ? parseFloat(gpsLat) : null,
       gpsLng: gpsLng ? parseFloat(gpsLng) : null,
       gpsAccuracy: gpsAccuracy ? parseFloat(gpsAccuracy) : null,
@@ -148,19 +163,26 @@ exports.start = async (req, res) => {
 };
 
 exports.complete = async (req, res) => {
-  const { notes } = req.body;
+  const { notes, overallStatus } = req.body;
   const insp = await prisma.inspection.findUnique({
     where: { id: req.params.id },
-    include: { checklistResults: true },
+    include: { checklistResults: { include: { template: true } } },
   });
   if (!insp) return res.status(404).json({ success: false, message: 'Inspeksi tidak ditemukan' });
 
-  // Calculate compliance score
+  // Calculate compliance score based on answerOptions weights
   const results = insp.checklistResults;
-  const sesuai = results.filter(r => r.status === 'sesuai').length;
-  const na = results.filter(r => r.status === 'na').length;
-  const applicable = results.length - na;
-  const score = applicable > 0 ? Math.round((sesuai / applicable) * 100) : 0;
+  let totalMaxScore = 0;
+  let totalScore = 0;
+  for (const r of results) {
+    const opts = JSON.parse(r.template.answerOptions || '[]');
+    if (opts.length === 0) continue;
+    const maxScore = Math.max(...opts.map(o => o.score));
+    const selected = opts.find(o => o.label === r.status);
+    totalMaxScore += maxScore;
+    totalScore += selected ? selected.score : 0;
+  }
+  const score = totalMaxScore > 0 ? Math.round((totalScore / totalMaxScore) * 100) : 0;
 
   const updated = await prisma.inspection.update({
     where: { id: req.params.id },
@@ -168,19 +190,12 @@ exports.complete = async (req, res) => {
       status: 'selesai',
       completedAt: new Date(),
       complianceScore: score,
+      overallStatus: overallStatus || null,
       notes: notes || insp.notes,
     },
   });
 
-  const scoreBreakdown = {
-    total: results.length,
-    sesuai,
-    tidakSesuai: results.filter(r => r.status === 'tidak_sesuai').length,
-    na,
-    score,
-  };
-
-  res.json({ success: true, data: updated, scoreBreakdown });
+  res.json({ success: true, data: updated, scoreBreakdown: { totalScore, totalMaxScore, score } });
 };
 
 exports.uploadPhoto = async (req, res) => {
@@ -193,6 +208,7 @@ exports.uploadPhoto = async (req, res) => {
       filename: req.file.filename,
       url,
       caption: req.body.caption || null,
+      label: req.body.label || '',
     },
   });
   res.status(201).json({ success: true, data: photo });

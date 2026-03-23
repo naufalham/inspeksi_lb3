@@ -44,7 +44,7 @@ class InspeksiProApp extends StatelessWidget {
       scaffoldBackgroundColor: AppColors.background,
       colorScheme: ColorScheme.dark(
         primary: AppColors.primary,
-        secondary: AppColors.secondary,
+        secondary: AppColors.accent,
         surface: AppColors.surface,
         background: AppColors.background,
         error: AppColors.danger,

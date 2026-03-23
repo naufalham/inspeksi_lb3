@@ -56,10 +56,11 @@ model Inspection {
   id              String    @id @default(cuid())
   warehouseId     String
   warehouse       Warehouse @relation(fields: [warehouseId], references: [id])
-  inspectorId     String
-  inspector       User      @relation("Inspector", fields: [inspectorId], references: [id])
+  inspectorId     String?
+  inspector       User?     @relation("Inspector", fields: [inspectorId], references: [id])
   scheduledById   String?
   scheduledBy     User?     @relation("ScheduledBy", fields: [scheduledById], references: [id])
+  type            String    @default("tps_lb3") // "tps_lb3" | "apd" | "p3k" | "apar" | "fire_alarm" | "hydrant"
   scheduledDate   DateTime
   startedAt       DateTime?
   completedAt     DateTime?
@@ -68,6 +69,7 @@ model Inspection {
   gpsAccuracy     Float?
   status          String    @default("dijadwalkan") // "dijadwalkan" | "berlangsung" | "selesai" | "dibatalkan"
   complianceScore Float?
+  overallStatus   String?
   notes           String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -78,12 +80,16 @@ model Inspection {
 }
 
 model ChecklistTemplate {
-  id          String   @id @default(cuid())
-  category    String
-  description String
-  order       Int
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id             String   @id @default(cuid())
+  inspectionType String   @default("tps_lb3") // "tps_lb3" | "apd" | "p3k" | "apar" | "fire_alarm" | "hydrant"
+  category       String
+  description    String
+  order          Int
+  answerOptions  String   @default("[]")  // JSON: [{label:string, score:number}]
+  requiresPhoto  Boolean  @default(false)
+  photoLabel     String   @default("")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
 
   results ChecklistResult[]
 }
@@ -121,5 +127,6 @@ model Photo {
   filename     String
   url          String
   caption      String?
+  label        String     @default("")
   createdAt    DateTime   @default(now())
 }

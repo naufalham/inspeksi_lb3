@@ -6,6 +6,27 @@ import '../auth/auth_provider.dart';
 import 'inspection_provider.dart';
 import '../../shared/widgets/status_badge.dart';
 
+const _typeLabels = {
+  'tps_lb3':    'TPS LB3',
+  'apd':        'APD',
+  'p3k':        'P3K',
+  'apar':       'APAR',
+  'fire_alarm': 'Fire Alarm',
+  'hydrant':    'Hydrant',
+};
+
+Color _typeColor(String? type) {
+  switch (type) {
+    case 'tps_lb3':    return const Color(0xFF6366f1);
+    case 'apd':        return const Color(0xFFf97316);
+    case 'p3k':        return const Color(0xFFef4444);
+    case 'apar':       return const Color(0xFFf43f5e);
+    case 'fire_alarm': return const Color(0xFFf59e0b);
+    case 'hydrant':    return const Color(0xFF3b82f6);
+    default:           return const Color(0xFF6b7280);
+  }
+}
+
 class InspectionListScreen extends StatefulWidget {
   const InspectionListScreen({super.key});
 
@@ -136,10 +157,17 @@ class _InspectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheduledDate = DateTime.tryParse(insp['scheduledDate'] ?? '');
     final score = insp['complianceScore'];
+    final isUnassigned = insp['inspector'] == null;
     final isMyInspection =
         insp['inspector']?['id'] == currentUserId;
+    final canClaim =
+        insp['status'] == 'dijadwalkan' && isUnassigned;
     final canStart =
-        insp['status'] == 'dijadwalkan' && isMyInspection;
+        insp['status'] == 'dijadwalkan' && isMyInspection && !isUnassigned;
+    final canResume =
+        insp['status'] == 'berlangsung' && isMyInspection;
+    final inProgressByOther =
+        insp['status'] == 'berlangsung' && !isMyInspection && !isUnassigned;
 
     Color? scoreColor;
     if (score != null) {
@@ -164,13 +192,36 @@ class _InspectionCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        insp['warehouse']?['name'] ?? '',
-                        style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              insp['warehouse']?['name'] ?? '',
+                              style: TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _typeColor(insp['type'] as String?).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              _typeLabels[insp['type']] ?? (insp['type'] ?? ''),
+                              style: TextStyle(
+                                color: _typeColor(insp['type'] as String?),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 3),
                       Text(
@@ -224,28 +275,66 @@ class _InspectionCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
-                    insp['inspector']?['name'] ?? '',
+                    isUnassigned
+                        ? 'Belum ditugaskan'
+                        : insp['inspector']?['name'] ?? '',
                     style: TextStyle(
-                        color: AppColors.textSecondary, fontSize: 12),
+                        color: isUnassigned
+                            ? AppColors.textMuted
+                            : AppColors.textSecondary,
+                        fontSize: 12,
+                        fontStyle: isUnassigned
+                            ? FontStyle.italic
+                            : FontStyle.normal),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
-            if (canStart) ...[
+            if (inProgressByOther) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.lock_outline, size: 13, color: AppColors.warning),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Sedang dikerjakan: ${insp['inspector']?['name'] ?? ''}',
+                      style: TextStyle(
+                          color: AppColors.warning,
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (canClaim || canStart || canResume) ...[
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () =>
                       context.push('/inspeksi/${insp['id']}/lakukan'),
-                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                  label: const Text('Mulai Inspeksi'),
+                  icon: Icon(
+                    canResume
+                        ? Icons.arrow_forward_rounded
+                        : canClaim
+                            ? Icons.add_task_rounded
+                            : Icons.play_arrow_rounded,
+                    size: 18,
+                  ),
+                  label: Text(canResume
+                      ? 'Lanjutkan Inspeksi'
+                      : canClaim
+                          ? 'Ambil & Mulai'
+                          : 'Mulai Inspeksi'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
+                    backgroundColor: canResume
+                        ? AppColors.warning
+                        : AppColors.primary,
                     foregroundColor: Colors.white,
-                    padding:
-                        const EdgeInsets.symmetric(vertical: 10),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
                   ),
                 ),
               ),

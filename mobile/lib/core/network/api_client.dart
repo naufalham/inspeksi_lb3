@@ -118,7 +118,7 @@ class ApiClient {
   }
 
   Future<dynamic> postMultipart(String path, File file,
-      {String field = 'photo'}) async {
+      {String field = 'photo', Map<String, String>? fields}) async {
     final token = await _storage.getAccessToken();
     final request = http.MultipartRequest(
       'POST',
@@ -127,6 +127,7 @@ class ApiClient {
     if (token != null) {
       request.headers['Authorization'] = 'Bearer $token';
     }
+    if (fields != null) request.fields.addAll(fields);
     request.files.add(await http.MultipartFile.fromPath(field, file.path));
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);

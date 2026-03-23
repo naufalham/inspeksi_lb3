@@ -6,13 +6,26 @@ import { useAuthStore } from '@/stores/authStore';
 
 interface Inspection {
   id: string;
+  type: string;
   scheduledDate: string;
   status: string;
   complianceScore?: number;
   warehouse: { id: string; name: string; address: string };
-  inspector: { id: string; name: string };
+  inspector: { id: string; name: string } | null;
   _count?: { findings: number; photos: number };
 }
+
+const INSPECTION_TYPES = [
+  { value: 'tps_lb3',    label: 'TPS LB3',    color: 'bg-indigo-500/15 text-indigo-400' },
+  { value: 'apd',        label: 'APD',         color: 'bg-orange-500/15 text-orange-400' },
+  { value: 'p3k',        label: 'P3K',         color: 'bg-red-500/15 text-red-400' },
+  { value: 'apar',       label: 'APAR',        color: 'bg-rose-500/15 text-rose-400' },
+  { value: 'fire_alarm', label: 'Fire Alarm',  color: 'bg-amber-500/15 text-amber-400' },
+  { value: 'hydrant',    label: 'Hydrant',     color: 'bg-blue-500/15 text-blue-400' },
+];
+
+const typeLabel = (t: string) => INSPECTION_TYPES.find(x => x.value === t)?.label ?? t;
+const typeColor = (t: string) => INSPECTION_TYPES.find(x => x.value === t)?.color ?? 'bg-slate-700 text-slate-400';
 
 const statusBadgeMap: Record<string, string> = {
   dijadwalkan: 'badge-info',
@@ -100,6 +113,7 @@ export default function InspeksiPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="font-semibold text-white">{insp.warehouse.name}</h3>
                     <span className={statusBadge(insp.status)}>{statusLabel(insp.status)}</span>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${typeColor(insp.type)}`}>{typeLabel(insp.type)}</span>
                   </div>
                   <p className="text-slate-400 text-sm mt-0.5">{insp.warehouse.address}</p>
                   <div className="flex items-center gap-4 mt-2 text-xs text-slate-500 flex-wrap">
@@ -110,7 +124,10 @@ export default function InspeksiPage() {
                         year: 'numeric',
                       })}
                     </span>
-                    <span>{insp.inspector.name}</span>
+                    {insp.inspector
+                      ? <span>{insp.inspector.name}</span>
+                      : <span className="italic text-slate-600">Belum ditugaskan</span>
+                    }
                     {insp._count && (
                       <>
                         <span>{insp._count.findings} temuan</span>
@@ -126,10 +143,25 @@ export default function InspeksiPage() {
                     </div>
                   )}
                   <div className="flex gap-2 mt-2">
-                    {insp.status === 'dijadwalkan' && insp.inspector.id === user?.id && (
+                    {insp.status === 'dijadwalkan' && !insp.inspector && (
+                      <Link href={`/inspeksi/${insp.id}/lakukan`} className="btn-primary text-xs py-1 px-3">
+                        Ambil & Mulai
+                      </Link>
+                    )}
+                    {insp.status === 'dijadwalkan' && insp.inspector?.id === user?.id && (
                       <Link href={`/inspeksi/${insp.id}/lakukan`} className="btn-primary text-xs py-1 px-3">
                         Mulai
                       </Link>
+                    )}
+                    {insp.status === 'berlangsung' && insp.inspector?.id === user?.id && (
+                      <Link href={`/inspeksi/${insp.id}/lakukan`} className="btn-warning text-xs py-1 px-3">
+                        Lanjutkan
+                      </Link>
+                    )}
+                    {insp.status === 'berlangsung' && insp.inspector && insp.inspector.id !== user?.id && (
+                      <span className="text-xs text-amber-400 py-1">
+                        Dikerjakan: {insp.inspector.name}
+                      </span>
                     )}
                     <Link href={`/inspeksi/${insp.id}`} className="btn-secondary text-xs py-1 px-3">
                       Detail
@@ -168,7 +200,7 @@ function ScheduleModal({
 }) {
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
   const [users, setUsers] = useState<{ id: string; name: string; role: string }[]>([]);
-  const [form, setForm] = useState({ warehouseId: '', inspectorId: '', scheduledDate: '' });
+  const [form, setForm] = useState({ warehouseId: '', inspectorId: '', scheduledDate: '', type: 'tps_lb3' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -194,7 +226,7 @@ function ScheduleModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[2000] p-4">
       <div className="card w-full max-w-md p-6">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-lg font-semibold text-white">Jadwalkan Inspeksi</h3>
@@ -213,6 +245,19 @@ function ScheduleModal({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
+            <label className="block text-sm text-slate-300 mb-1">Jenis Inspeksi</label>
+            <select
+              value={form.type}
+              onChange={e => setForm(p => ({ ...p, type: e.target.value }))}
+              className="input-field"
+              required
+            >
+              {INSPECTION_TYPES.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-sm text-slate-300 mb-1">Gudang</label>
             <select
               value={form.warehouseId}
@@ -229,14 +274,16 @@ function ScheduleModal({
             </select>
           </div>
           <div>
-            <label className="block text-sm text-slate-300 mb-1">Inspektur</label>
+            <label className="block text-sm text-slate-300 mb-1">
+              Inspektur
+              <span className="text-slate-500 font-normal ml-1">(opsional — kosongkan untuk task pool)</span>
+            </label>
             <select
               value={form.inspectorId}
               onChange={e => setForm(p => ({ ...p, inspectorId: e.target.value }))}
               className="input-field"
-              required
             >
-              <option value="">Pilih inspektur...</option>
+              <option value="">Siapa saja (Task Pool)</option>
               {users.map(u => (
                 <option key={u.id} value={u.id}>
                   {u.name}

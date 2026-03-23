@@ -1,29 +1,37 @@
 class ApiEndpoints {
-  static const String baseUrl = 'http://10.0.2.2:3001/api';
+  // Default 10.0.2.2 = Android emulator localhost
+  // Untuk HP fisik: flutter run --dart-define=API_HOST=192.168.1.13
+  static const String _host = String.fromEnvironment('API_HOST', defaultValue: '10.0.2.2');
+  static const String baseUrl = 'http://$_host:5000/api';
 
   // Auth
   static const String login = '/auth/login';
+  static const String refresh = '/auth/refresh';
   static const String me = '/auth/me';
   static const String logout = '/auth/logout';
 
   // Warehouses
-  static const String warehouses = '/gudang';
-  static String warehouseById(String id) => '/gudang/$id';
+  static const String warehouses = '/warehouses';
+  static String warehouseById(String id) => '/warehouses/$id';
 
   // Inspections
-  static const String inspections = '/inspeksi';
-  static String inspectionById(String id) => '/inspeksi/$id';
-  static String startInspection(String id) => '/inspeksi/$id/mulai';
-  static String completeInspection(String id) => '/inspeksi/$id/selesai';
-  static String checklistResults(String id) => '/inspeksi/$id/checklist';
-  static String findings(String id) => '/inspeksi/$id/temuan';
+  static const String inspections = '/inspections';
+  static String inspectionById(String id) => '/inspections/$id';
+  static String startInspection(String id) => '/inspections/$id/start';
+  static String completeInspection(String id) => '/inspections/$id/complete';
+  static String checklistResults(String id) => '/inspections/$id/checklist';
+  static String findings(String id) => '/inspections/$id/findings';
   static String updateFinding(String inspId, String findId) =>
-      '/inspeksi/$inspId/temuan/$findId';
-  static String photos(String id) => '/inspeksi/$id/foto';
+      '/inspections/$inspId/findings/$findId';
+  static String photos(String id) => '/inspections/$id/photos';
 
   // Templates
-  static const String checklistTemplates = '/checklist-template';
+  static const String checklistTemplates = '/checklist-templates';
+  static String checklistTemplatesByType(String type) => '/checklist-templates?type=$type';
 
   // Reports/Dashboard
-  static const String statistics = '/laporan/statistik';
+  static const String statistics = '/reports/dashboard';
+  static const String reportsDashboard = '/reports/dashboard';
+  static String inspectionFindings(String id) => '/inspections/$id/findings';
+  static String inspectionPhotos(String id) => '/inspections/$id/photos';
 }

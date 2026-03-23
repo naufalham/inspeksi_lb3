@@ -1,8 +1,9 @@
 const prisma = require('../prismaClient');
 
 exports.getTemplates = async (req, res) => {
+  const { type } = req.query;
   const templates = await prisma.checklistTemplate.findMany({
-    where: { isActive: true },
+    where: { isActive: true, ...(type ? { inspectionType: type } : {}) },
     orderBy: { order: 'asc' },
   });
 
