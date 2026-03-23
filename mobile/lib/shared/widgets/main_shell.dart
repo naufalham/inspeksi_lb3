@@ -13,7 +13,6 @@ class MainShell extends StatelessWidget {
     int idx = 0;
     if (location.startsWith('/gudang')) idx = 1;
     if (location.startsWith('/inspeksi')) idx = 2;
-
     return Scaffold(
       body: child,
       bottomNavigationBar: Container(

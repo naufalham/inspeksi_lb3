@@ -5,6 +5,7 @@ import '../../features/dashboard/dashboard_screen.dart';
 import '../../features/gudang/warehouse_list_screen.dart';
 import '../../features/gudang/warehouse_detail_screen.dart';
 import '../../features/inspeksi/inspection_list_screen.dart';
+import '../../features/inspeksi/inspection_detail_screen.dart';
 import '../../features/inspeksi/inspection_form_screen.dart';
 import '../widgets/main_shell.dart';
 
@@ -46,6 +47,12 @@ class AppRouter {
             GoRoute(
               path: '/inspeksi',
               builder: (_, __) => const InspectionListScreen(),
+            ),
+            GoRoute(
+              path: '/inspeksi/:id',
+              builder: (_, state) => InspectionDetailScreen(
+                inspectionId: state.pathParameters['id']!,
+              ),
             ),
             GoRoute(
               path: '/inspeksi/:id/lakukan',

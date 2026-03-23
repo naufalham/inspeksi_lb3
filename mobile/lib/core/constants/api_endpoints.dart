@@ -29,6 +29,10 @@ class ApiEndpoints {
   static const String checklistTemplates = '/checklist-templates';
   static String checklistTemplatesByType(String type) => '/checklist-templates?type=$type';
 
+  // Users
+  static const String users = '/users';
+  static String userById(String id) => '/users/$id';
+
   // Reports/Dashboard
   static const String statistics = '/reports/dashboard';
   static const String reportsDashboard = '/reports/dashboard';

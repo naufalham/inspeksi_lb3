@@ -180,7 +180,10 @@ class _InspectionCard extends StatelessWidget {
     }
 
     return Card(
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => context.push('/inspeksi/${insp['id']}'),
+        child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,6 +344,7 @@ class _InspectionCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }
