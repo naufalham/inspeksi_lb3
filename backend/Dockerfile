@@ -18,8 +18,8 @@ RUN npx prisma generate
 # Copy source
 COPY src ./src/
 
-# Create directories for SQLite DB and uploads
-RUN mkdir -p /app/data /app/uploads
+# Create uploads directory
+RUN mkdir -p /app/uploads
 
 # Expose port
 EXPOSE 5000
