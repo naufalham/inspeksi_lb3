@@ -13,16 +13,20 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
 // CORS
 const origins = (process.env.CORS_ORIGINS || 'http://localhost:3000').split(',');
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || origins.includes(origin) || origins.includes('*')) {
+    if (!origin || origins.includes('*') || origins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
-}));
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Logging
 if (process.env.NODE_ENV !== 'test') {
