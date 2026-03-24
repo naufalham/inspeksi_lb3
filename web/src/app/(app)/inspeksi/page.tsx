@@ -199,16 +199,12 @@ function ScheduleModal({
   onSave: () => void;
 }) {
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
-  const [users, setUsers] = useState<{ id: string; name: string; role: string }[]>([]);
-  const [form, setForm] = useState({ warehouseId: '', inspectorId: '', scheduledDate: '', type: 'tps_lb3' });
+  const [form, setForm] = useState({ warehouseId: '', scheduledDate: '', type: 'tps_lb3' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.get('/warehouses?limit=100').then(r => setWarehouses(r.data.data));
-    api.get('/users').then(r =>
-      setUsers(r.data.data.filter((u: { role: string }) => u.role === 'inspektur'))
-    );
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -269,24 +265,6 @@ function ScheduleModal({
               {warehouses.map(w => (
                 <option key={w.id} value={w.id}>
                   {w.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-slate-300 mb-1">
-              Inspektur
-              <span className="text-slate-500 font-normal ml-1">(opsional — kosongkan untuk task pool)</span>
-            </label>
-            <select
-              value={form.inspectorId}
-              onChange={e => setForm(p => ({ ...p, inspectorId: e.target.value }))}
-              className="input-field"
-            >
-              <option value="">Siapa saja (Task Pool)</option>
-              {users.map(u => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
                 </option>
               ))}
             </select>
