@@ -1,8 +1,11 @@
 class ApiEndpoints {
-  // Default 10.0.2.2 = Android emulator localhost
-  // Untuk HP fisik: flutter run --dart-define=API_HOST=192.168.1.13
-  static const String _host = String.fromEnvironment('API_HOST', defaultValue: '10.0.2.2');
-  static const String baseUrl = 'http://$_host:5000/api';
+  // Default: emulator localhost
+  // Untuk HP fisik lokal: --dart-define=API_BASE_URL=http://192.168.1.x:5000/api
+  // Untuk production: --dart-define=API_BASE_URL=https://inspeksipro-backend-production.up.railway.app/api
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:5000/api',
+  );
 
   // Auth
   static const String login = '/auth/login';
